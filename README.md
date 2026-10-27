@@ -2,7 +2,7 @@
 
 Statistical analysis, statistical learning, and machine learning project for **ISTT1003 / ISTx1003** (Statistikk, statistisk læring og data science, NTNU).
 
-The project analyzes the **Spotify Top 2500 Most Streamed Tracks** dataset ([`data/kworb_top2500_spotify.csv`](data/kworb_top2500_spotify.csv)), scraped from Kworb.net and enriched with musical features via the Spotify Web API.
+The project analyzes the **Spotify Top 2500 Most Streamed Tracks** dataset ([`data/kworb_top2500_spotify.csv`](data/kworb_top2500_spotify.csv)), scraped from [Kworb](https://kworb.net/spotify/songs.html), because Spotify does not provide an official top streams list. The list was then enriched with musical features via the old Spotify Web API through [Exportify](https://exportify.net).
 
 ---
 
