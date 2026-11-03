@@ -365,6 +365,28 @@ print(f"\\nDiagonal 1-til-1 treff (5x5): {diag_acc:.1%}")
 print(f"Cluster Purity:               {purity:.1%}")
 print(f"Adjusted Rand Index (ARI):    {ari:.3f}")
 print(f"Normalized Mutual Info (NMI): {nmi:.3f}")
+
+# Boksplott for alle 7 akustiske egenskaper på tvers av de 5 klyngene
+from matplotlib.patches import Patch
+cluster_palette = ['#e74c3c', '#2c3e50', '#27ae60', '#9b59b6', '#3498db']
+fig, axes = plt.subplots(2, 4, figsize=(18, 9))
+axes = axes.flatten()
+for idx, col in enumerate(feature_cols):
+    sns.boxplot(x='Cluster', y=col, hue='Cluster', data=df, ax=axes[idx], palette=cluster_palette, legend=False)
+    axes[idx].set_title(f"Fordeling av {col}", fontweight='bold')
+    axes[idx].set_xlabel("Klynge")
+    axes[idx].set_xticks(range(len(GENRE_ORDER)))
+    axes[idx].set_xticklabels([f"K{i}\\n({g.split('/')[0].strip()})" for i, g in enumerate(GENRE_ORDER)], fontsize=9)
+
+axes[7].axis('off')
+legend_handles = [
+    Patch(facecolor=cluster_palette[i], edgecolor='black', label=f"K{i}: {g}")
+    for i, g in enumerate(GENRE_ORDER)
+]
+axes[7].legend(handles=legend_handles, title="k-Means Klynger (k=5)", title_fontsize=12, fontsize=11, loc='center', frameon=True)
+plt.suptitle("Akustiske forskjeller på tvers av de 5 klyngene (Alle 7 egenskaper)", fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
 """))
 
 # CELLE 10: Diskusjon og konklusjon
