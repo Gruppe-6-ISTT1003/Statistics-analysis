@@ -22,7 +22,13 @@ import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score, silhouette_samples, adjusted_rand_score, normalized_mutual_info_score
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    silhouette_score, silhouette_samples, adjusted_rand_score,
+    normalized_mutual_info_score, accuracy_score, classification_report, confusion_matrix
+)
 
 # SciPy for dendrogram og optimal klynge-tilordning
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster, set_link_color_palette
@@ -522,8 +528,127 @@ def validate_against_genres(df):
     print(f"Lagret: {fig_path6}")
 
 
+def perform_genre_classification(df, feature_cols):
+    """
+    Utfører veiledet klassifikasjon (K-nærmeste naboer / KNN og Logistisk Regresjon)
+    på låtene med kjent sjangerfamilie (80% trening, 20% test).
+    """
+    print("\n" + "=" * 65)
+    print("7. VEILEDET KLASSIFIKASJON: KNN OG LOGISTISK REGRESJON")
+    print("=" * 65)
+
+    df_known = df[df['Genre_Family'] != 'Ukjent / Mangler tag'].copy()
+    X = df_known[feature_cols].values
+    y = df_known['Genre_Family'].values
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, random_state=42, stratify=y
+    )
+    print(f"Treningsdata: {len(X_train)} låter (80%), Testdata: {len(X_test)} låter (20%)")
+
+    scaler_clf = StandardScaler()
+    X_train_s = scaler_clf.fit_transform(X_train)
+    X_test_s = scaler_clf.transform(X_test)
+
+    # 1. Velg optimal K for KNN med 5-fold kryssvalidering på treningssettet
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    k_values = list(range(1, 36, 2))
+    cv_means = []
+    cv_stds = []
+    test_accs = []
+
+    for k in k_values:
+        knn = KNeighborsClassifier(n_neighbors=k)
+        scores = cross_val_score(knn, X_train_s, y_train, cv=cv, scoring='accuracy')
+        cv_means.append(scores.mean() * 100)
+        cv_stds.append(scores.std() * 100)
+        knn.fit(X_train_s, y_train)
+        test_accs.append(accuracy_score(y_test, knn.predict(X_test_s)) * 100)
+
+    best_idx = int(np.argmax(cv_means))
+    best_k = k_values[best_idx]
+    print(f"\nOptimal K for KNN (5-fold CV): K = {best_k} (CV-nøyaktighet: {cv_means[best_idx]:.1f}%)")
+
+    # Figur 7: Valg av K i KNN (Kryssvalidering vs Testsett)
+    plt.figure(figsize=(10, 5))
+    plt.plot(k_values, cv_means, 'o-', color='#2c3e50', lw=2, label='5-fold Kryssvalidering (Treningssett)')
+    plt.plot(k_values, test_accs, 's--', color='#3498db', lw=2, alpha=0.85, label='Testsett (20% uavhengig)')
+    plt.axvline(best_k, color='#e74c3c', linestyle=':', lw=2, label=f'Valgt K = {best_k} ({cv_means[best_idx]:.1f}%)')
+    plt.title('Valg av antall naboer (K) i K-nærmeste naboer (KNN)', fontweight='bold', fontsize=13)
+    plt.xlabel('Antall nærmeste naboer (K)', fontweight='bold')
+    plt.ylabel('Klassifikasjonsnøyaktighet / Accuracy (%)', fontweight='bold')
+    plt.xticks(k_values)
+    plt.legend(loc='lower right', frameon=True)
+    plt.tight_layout()
+    fig_path7 = os.path.join(FIGURES_DIR, "7_knn_k_selection.png")
+    plt.savefig(fig_path7, dpi=300)
+    plt.close()
+    print(f"Lagret: {fig_path7}")
+
+    # 2. Tren beste KNN og Multinomial Logistisk Regresjon
+    knn_best = KNeighborsClassifier(n_neighbors=best_k)
+    knn_best.fit(X_train_s, y_train)
+    y_pred_knn = knn_best.predict(X_test_s)
+    acc_knn = accuracy_score(y_test, y_pred_knn)
+
+    logreg = LogisticRegression(max_iter=1000, random_state=42)
+    logreg.fit(X_train_s, y_train)
+    y_pred_lr = logreg.predict(X_test_s)
+    acc_lr = accuracy_score(y_test, y_pred_lr)
+
+    print(f"\nTest-nøyaktighet KNN (K={best_k}):          {acc_knn:.1%}")
+    print(f"Test-nøyaktighet Logistisk Regresjon:  {acc_lr:.1%}")
+    print("\nKlassifikasjonsrapport på testsettet (KNN, K=15):")
+    print(classification_report(y_test, y_pred_knn, labels=GENRE_ORDER, digits=3))
+
+    # 3. Figur 8: Kvadratisk (5x5) forvirringsmatrise på testsettet (KNN vs Logistisk Regresjon)
+    cm_knn_pct = confusion_matrix(y_test, y_pred_knn, labels=GENRE_ORDER, normalize='true') * 100
+    cm_lr_pct = confusion_matrix(y_test, y_pred_lr, labels=GENRE_ORDER, normalize='true') * 100
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 7.5))
+
+    sns.heatmap(
+        cm_knn_pct, annot=True, fmt=".1f", cmap="YlGnBu", square=True,
+        cbar_kws={'label': 'Andel (%) av sann sjanger', 'shrink': 0.78},
+        xticklabels=GENRE_ORDER, yticklabels=GENRE_ORDER, ax=ax1
+    )
+    ax1.set_title(f"A) KNN (K={best_k}) på testsett (Accuracy = {acc_knn:.1%})", fontweight='bold', fontsize=12)
+    ax1.set_xlabel("Predikert sjangerfamilie", fontweight='bold')
+    ax1.set_ylabel("Faktisk sjangerfamilie i CSV (Sann klasse)", fontweight='bold')
+    ax1.set_xticklabels(GENRE_ORDER, rotation=30, ha='right', fontweight='bold')
+    ax1.set_yticklabels(GENRE_ORDER, rotation=0, fontweight='bold')
+
+    sns.heatmap(
+        cm_lr_pct, annot=True, fmt=".1f", cmap="YlGnBu", square=True,
+        cbar_kws={'label': 'Andel (%) av sann sjanger', 'shrink': 0.78},
+        xticklabels=GENRE_ORDER, yticklabels=GENRE_ORDER, ax=ax2
+    )
+    ax2.set_title(f"B) Logistisk regresjon på testsett (Accuracy = {acc_lr:.1%})", fontweight='bold', fontsize=12)
+    ax2.set_xlabel("Predikert sjangerfamilie", fontweight='bold')
+    ax2.set_ylabel("")
+    ax2.set_xticklabels(GENRE_ORDER, rotation=30, ha='right', fontweight='bold')
+    ax2.set_yticklabels(GENRE_ORDER, rotation=0, fontweight='bold')
+
+    for i, color in enumerate(CLUSTER_COLORS):
+        ax1.get_xticklabels()[i].set_color(color)
+        ax1.get_yticklabels()[i].set_color(color)
+        ax2.get_xticklabels()[i].set_color(color)
+        ax2.get_yticklabels()[i].set_color(color)
+
+    plt.suptitle("Veiledet klassifikasjon (5×5 forvirringsmatrise i % på testsettet, n=314)", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    fig_path8 = os.path.join(FIGURES_DIR, "8_classification_confusion_matrix.png")
+    plt.savefig(fig_path8, dpi=300)
+    plt.close()
+    print(f"Lagret: {fig_path8}")
+
+    # Lagre også KNN-predikert sjanger på hele datasettet i df
+    X_all_s = scaler_clf.transform(df[feature_cols].values)
+    df['Predicted_Genre_KNN'] = knn_best.predict(X_all_s)
+
+
 def main():
-    print("STARTER KLYNGEANALYSE PÅ SPOTIFY TOPP 2500 FOR SJANGERIDENTIFIKASJON...\n")
+    print("STARTER KLYNGEANALYSE OG KLASSIFIKASJON PÅ SPOTIFY TOPP 2500...\n")
     df, feature_cols = load_and_prepare_data()
     
     # Standardiser egenskapene (Z-score er avgjørende for avstandsbasert clustering)
@@ -544,11 +669,17 @@ def main():
     
     # Validering mot reelle sjangre
     validate_against_genres(df)
+
+    # Veiledet klassifikasjon (KNN og Logistisk regresjon)
+    perform_genre_classification(df, feature_cols)
     
-    # Lagre ny CSV-fil med generaliserte sjangerkategorier og klyngetilhørighet plassert rett etter 'Genres'
-    orig_cols = [c for c in df.columns if c not in ['Genre_Family', 'Raw_Cluster', 'Cluster', 'Cluster_Genre', 'Cluster_Name', 'PC1', 'PC2']]
+    # Lagre ny CSV-fil med generaliserte sjangerkategorier, klyngetilhørighet og KNN-prediksjon
+    orig_cols = [c for c in df.columns if c not in [
+        'Genre_Family', 'Raw_Cluster', 'Cluster', 'Cluster_Genre',
+        'Cluster_Name', 'Predicted_Genre_KNN', 'PC1', 'PC2'
+    ]]
     genres_idx = orig_cols.index('Genres') + 1
-    out_cols = orig_cols[:genres_idx] + ['Genre_Family', 'Cluster', 'Cluster_Genre'] + orig_cols[genres_idx:]
+    out_cols = orig_cols[:genres_idx] + ['Genre_Family', 'Cluster', 'Cluster_Genre', 'Predicted_Genre_KNN'] + orig_cols[genres_idx:]
     out_csv_path = "data/kworb_top2500_spotify_generalized.csv"
     df[out_cols].to_csv(out_csv_path, index=False)
     print(f"\nLagret CSV med generaliserte kategorier: {out_csv_path}")
