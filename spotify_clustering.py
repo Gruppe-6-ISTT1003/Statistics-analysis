@@ -24,8 +24,9 @@ from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, silhouette_samples, adjusted_rand_score, normalized_mutual_info_score
 
-# SciPy for dendrogram
+# SciPy for dendrogram og optimal klynge-tilordning
 from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.optimize import linear_sum_assignment
 
 # Sett stil for visualiseringer
 sns.set_theme(style="whitegrid")
@@ -33,10 +34,18 @@ plt.rcParams.update({'font.size': 11, 'figure.autolayout': True})
 FIGURES_DIR = "figures/clustering"
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
+GENRE_ORDER = [
+    'Latin / Reggaeton',
+    'Rock / Metal',
+    'Acoustic / R&B / Indie',
+    'Hip-Hop / Rap',
+    'Pop / Dance'
+]
+
 
 def load_and_prepare_data(filepath="data/kworb_top2500_spotify.csv"):
     """
-    Laster inn data og mapper rå sjanger-tags til overordnede sjangerfamilier.
+    Laster inn data og mapper rå sjanger-tags til 5 overordnede sjangerfamilier.
     """
     print("=" * 65)
     print("1. LASTER INN OG FORBEREDER DATA FOR KLYNGEANALYSE")
@@ -50,22 +59,26 @@ def load_and_prepare_data(filepath="data/kworb_top2500_spotify.csv"):
         'Acousticness', 'Valence', 'Tempo'
     ]
     
-    # Kartlegg rå sjanger-tags til hovedfamilier (for ekstern validering)
+    # Kartlegg rå sjanger-tags til 5 hovedfamilier (for 1-til-1 validering mot k=5 klynger)
     def map_genre_family(g):
         if not isinstance(g, str) or not g.strip():
             return 'Ukjent / Mangler tag'
         g_lower = g.lower()
-        if any(k in g_lower for k in ['reggaeton', 'latin', 'urbano', 'corrido', 'banda', 'mexicana']):
+        if any(k in g_lower for k in [
+            'reggaeton', 'latin', 'urbano', 'corrido', 'banda', 'mexicana',
+            'bachata', 'moombahton', 'reggae', 'afrobeats', 'salsa', 'cumbia', 'dembow'
+        ]):
             return 'Latin / Reggaeton'
-        elif any(k in g_lower for k in ['rap', 'hip hop', 'trap']):
+        elif any(k in g_lower for k in ['rap', 'hip hop', 'trap', 'drill', 'grime', 'crunk', 'phonk']):
             return 'Hip-Hop / Rap'
-        elif any(k in g_lower for k in ['rock', 'metal', 'grunge', 'punk']):
+        elif any(k in g_lower for k in ['rock', 'metal', 'grunge', 'punk', 'emo', 'new wave', 'britpop', 'shoegaze']):
             return 'Rock / Metal'
-        elif any(k in g_lower for k in ['pop', 'k-pop', 'edm', 'dance', 'electropop']):
+        elif any(k in g_lower for k in [
+            'pop', 'k-pop', 'edm', 'dance', 'electropop', 'house', 'electro',
+            'disco', 'techno', 'trance', 'eurodance', 'synth', 'uk garage', 'dubstep'
+        ]):
             return 'Pop / Dance'
-        elif any(k in g_lower for k in ['folk', 'acoustic', 'country', 'r&b', 'soul', 'indie', 'ballad']):
-            return 'Acoustic / R&B / Indie'
-        return 'Annet'
+        return 'Acoustic / R&B / Indie'
     
     df['Genre_Family'] = df['Genres'].apply(map_genre_family)
     
@@ -116,8 +129,8 @@ def find_optimal_k(X_scaled, k_range=range(2, 11)):
     
     plt.title('Valg av optimalt k: Elbow-metoden og Silhuett-analyse', fontweight='bold', fontsize=13)
     
-    # Markér k=4 som optimal balanse mellom tolkbarhet og metrikk
-    ax1.axvline(4, color='gray', linestyle=':', alpha=0.8)
+    # Markér k=5 for direkte sammenligning med de 5 sjangerfamiliene
+    ax1.axvline(5, color='gray', linestyle=':', alpha=0.8, label='Valgt k=5 (5 sjangerfamilier)')
     
     lines = line1 + line2
     labels = [l.get_label() for l in lines]
@@ -129,44 +142,59 @@ def find_optimal_k(X_scaled, k_range=range(2, 11)):
     plt.close()
     print(f"\nLagret: {fig_path1}")
     
-    return 4  # Anbefalt k
+    return 5  # k=5 matcher de 5 sjangerfamiliene
 
 
-def perform_kmeans_clustering(df, X_scaled, feature_cols, k=4):
+def perform_kmeans_clustering(df, X_scaled, feature_cols, k=5):
     """
-    Utfører k-Means med k=4 og profilerer klyngene.
+    Utfører k-Means med k=5, tilordner klyngene 1-til-1 mot de 5 sjangerfamiliene,
+    og profilerer klyngene.
     """
     print("\n" + "=" * 65)
     print(f"3. UTFØRER K-MEANS KLYNGEANALYSE (k = {k})")
     print("=" * 65)
     
     km = KMeans(n_clusters=k, random_state=42, n_init=15)
-    df['Cluster'] = km.fit_predict(X_scaled)
+    raw_clusters = km.fit_predict(X_scaled)
+    df['Raw_Cluster'] = raw_clusters
+    
+    # Tilordne hver klynge 1-til-1 til sjangerfamilien den samsvarer best med (Hungarian matching)
+    df_known = df[df['Genre_Family'] != 'Ukjent / Mangler tag']
+    ct_raw = pd.crosstab(df_known['Genre_Family'], df_known['Raw_Cluster'], normalize='index').reindex(GENRE_ORDER)
+    row_ind, col_ind = linear_sum_assignment(-ct_raw.values)
+    remap = {int(col_ind[r]): r for r in row_ind}
+    
+    df['Cluster'] = df['Raw_Cluster'].map(remap)
+    df['Cluster_Genre'] = df['Cluster'].map(lambda c: GENRE_ORDER[c])
+    
+    # Reorganiser klyngesentrene i samme rekkefølge som GENRE_ORDER (0..4)
+    inv_remap = {new_idx: old_idx for old_idx, new_idx in remap.items()}
+    ordered_centers = np.array([km.cluster_centers_[inv_remap[i]] for i in range(k)])
     
     # Beregn klyngesentrene på original skala
     cluster_centers_orig = df.groupby('Cluster')[feature_cols].mean()
     print("\nKlyngenes gjennomsnittsverdier (original måleskala):")
     print(cluster_centers_orig.round(3).T)
     
-    # Gi hver klynge en tolkbar musikalsk arketype basert på profil
+    # Koble hver klynge til sin tilsvarende sjangerkategori og akustiske profil
     cluster_labels_map = {
-        0: "Klynge 0: Munter Klubb & Latin Pop (Høy Danceability + Høy Valence)",
-        1: "Klynge 1: Drivende Rock & Høy Energi (Lav Akustiskhet + Lav Valence)",
-        2: "Klynge 2: Akustisk & Rolige Ballader (Høy Akustiskhet + Lav Energi)",
-        3: "Klynge 3: Rytmisk Urban & Rap (Høy Taleandel + Raskere Tempo)"
+        0: "K0: Latin / Reggaeton (Høy Danceability + Høy Valence)",
+        1: "K1: Rock / Metal (Høy Energi + Raskt Tempo)",
+        2: "K2: Acoustic / R&B / Indie (Høy Akustiskhet + Lav Energi)",
+        3: "K3: Hip-Hop / Rap (Høy Speechiness + Rytmisk)",
+        4: "K4: Pop / Dance (Balansert Energi & Dansbarhet)"
     }
     df['Cluster_Name'] = df['Cluster'].map(cluster_labels_map)
     
     # Figur 2: Radar-profil (Parallel Coordinates / Z-score profil)
-    scaler = StandardScaler()
-    scaled_centers = pd.DataFrame(km.cluster_centers_, columns=feature_cols)
+    scaled_centers = pd.DataFrame(ordered_centers, columns=feature_cols)
     
     plt.figure(figsize=(12, 6))
     for i in range(k):
         plt.plot(feature_cols, scaled_centers.iloc[i], marker='o', lw=2.5,
-                 label=f"Klynge {i}: {cluster_labels_map[i].split(':')[1].strip()}")
+                 label=cluster_labels_map[i])
     plt.axhline(0, color='black', linestyle='--', alpha=0.5, label='Datasettets gjennomsnitt (Z=0)')
-    plt.title("Akustiske fingeravtrykk for de 4 klyngene (Standardiserte Z-verdier)", fontweight='bold', fontsize=13)
+    plt.title("Akustiske fingeravtrykk for de 5 klyngene (Standardiserte Z-verdier)", fontweight='bold', fontsize=13)
     plt.xlabel("Akustisk egenskap", fontweight='bold')
     plt.ylabel("Standardavvik fra gjennomsnitt (Z-score)", fontweight='bold')
     plt.xticks(rotation=15)
@@ -200,37 +228,40 @@ def perform_pca_and_visualization(df, X_scaled, feature_cols):
     print("\nPCA Hovedkomponenter (Loadings):")
     print(pca_loadings.round(3))
     
+    # Felles fargepalett for de 5 kategoriene i både Panel A og Panel B
+    palette_genres = {
+        'Latin / Reggaeton': '#e74c3c',
+        'Rock / Metal': '#2c3e50',
+        'Acoustic / R&B / Indie': '#27ae60',
+        'Hip-Hop / Rap': '#9b59b6',
+        'Pop / Dance': '#3498db'
+    }
+    
     # Figur 3: Side-ved-side PCA (Klynger vs Reelle Sjangre)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     
-    # Panel 1: k-Means Klynger
+    # Panel 1: k-Means Klynger (mappet til samme 5 kategorinavn og farger)
     sns.scatterplot(
-        x='PC1', y='PC2', hue='Cluster', palette='tab10',
+        x='PC1', y='PC2', hue='Cluster_Genre', hue_order=GENRE_ORDER, palette=palette_genres,
         data=df, alpha=0.65, s=35, ax=ax1
     )
-    ax1.set_title(f"A) k-Means Klynger (k=4) i PCA-rommet", fontweight='bold')
+    ax1.set_title("A) k-Means Klynger (k=5) i PCA-rommet", fontweight='bold')
     ax1.set_xlabel(f"PC1 ({var_exp[0]:.1%} varians) - Energi/Lydstyrke vs Akustisk", fontweight='bold')
     ax1.set_ylabel(f"PC2 ({var_exp[1]:.1%} varians) - Dansbarhet & Munterhet", fontweight='bold')
+    ax1.legend(title="Predikert klynge", loc="best")
     
     # Panel 2: Faktiske sjangre (ekskluderer ukjente for klarhet)
     df_known = df[df['Genre_Family'] != 'Ukjent / Mangler tag'].copy()
-    palette_genres = {
-        'Latin / Reggaeton': '#e74c3c',
-        'Hip-Hop / Rap': '#9b59b6',
-        'Rock / Metal': '#2c3e50',
-        'Pop / Dance': '#3498db',
-        'Acoustic / R&B / Indie': '#27ae60',
-        'Annet': '#95a5a6'
-    }
     sns.scatterplot(
-        x='PC1', y='PC2', hue='Genre_Family', palette=palette_genres,
+        x='PC1', y='PC2', hue='Genre_Family', hue_order=GENRE_ORDER, palette=palette_genres,
         data=df_known, alpha=0.65, s=35, ax=ax2
     )
     ax2.set_title("B) Faktiske sjangerfamilier (Ground Truth) i PCA-rommet", fontweight='bold')
     ax2.set_xlabel(f"PC1 ({var_exp[0]:.1%} varians)", fontweight='bold')
     ax2.set_ylabel(f"PC2 ({var_exp[1]:.1%} varians)", fontweight='bold')
+    ax2.legend(title="Faktisk sjanger", loc="best")
     
-    plt.suptitle("Sammenligning av uovervåkede klynger og musikksjangre (Spotify Top 2500)", fontsize=14, fontweight='bold')
+    plt.suptitle("Sammenligning av uovervåkede klynger (k=5) og musikksjangre (Spotify Top 2500)", fontsize=14, fontweight='bold')
     plt.tight_layout()
     fig_path3 = os.path.join(FIGURES_DIR, "3_pca_clusters_vs_genres.png")
     plt.savefig(fig_path3, dpi=300)
@@ -246,7 +277,7 @@ def hierarchical_clustering(df, X_scaled):
     print("5. HIERARKISK AGGLOMERATIV KLYNGEANALYSE")
     print("=" * 65)
     
-    # For dendrogram bruker vi et representativt subutvalg (f.eks. 120 låter) for lesbarhet
+    # For dendrogram bruker vi et representativt subutvalg (100 låter) for lesbarhet
     np.random.seed(42)
     sample_indices = np.random.choice(len(df), size=100, replace=False)
     X_sub = X_scaled[sample_indices]
@@ -262,9 +293,9 @@ def hierarchical_clustering(df, X_scaled):
         leaf_rotation=90,
         leaf_font_size=10,
         show_contracted=True,
-        color_threshold=12.0
+        color_threshold=10.5
     )
-    plt.axhline(12.0, color='red', linestyle='--', label='Snitthøyde for 4 hovedgrener')
+    plt.axhline(10.5, color='red', linestyle='--', label='Snitthøyde for 5 hovedgrener')
     plt.title("Hierarkisk dendrogram (Ward's kobling) på et tilfeldig utvalg låter", fontweight='bold', fontsize=13)
     plt.xlabel("Klyngeindeks / Antall sammenslåtte låter", fontweight='bold')
     plt.ylabel("Euklidsk avstand (Ward's distanse)", fontweight='bold')
@@ -278,35 +309,45 @@ def hierarchical_clustering(df, X_scaled):
 
 def validate_against_genres(df):
     """
-    Evaluerer hvor godt de akustiske klyngene samsvarer med faktiske sjangre.
+    Evaluerer hvor godt de 5 akustiske klyngene samsvarer med de 5 faktiske sjangerfamiliene
+    i en kvadratisk (5x5) kontingenstabell / forvirringsmatrise.
     """
     print("\n" + "=" * 65)
-    print("6. VALIDERER KLYNGENE MOT REELLE SJANGRE")
+    print("6. VALIDERER KLYNGENE MOT REELLE SJANGRE (5x5 MATRISE)")
     print("=" * 65)
     
     df_known = df[df['Genre_Family'] != 'Ukjent / Mangler tag'].copy()
     
-    # Kryss-tabell (Contingency Table)
-    ct = pd.crosstab(df_known['Genre_Family'], df_known['Cluster'], margins=True)
-    print("\nKryss-tabell mellom faktiske sjangre og k-Means klynger:")
+    # Kryss-tabell (Contingency Table) med identisk rekkefølge på rader og kolonner (5x5)
+    ct = pd.crosstab(df_known['Genre_Family'], df_known['Cluster_Genre']).reindex(
+        index=GENRE_ORDER, columns=GENRE_ORDER
+    )
+    print("\nKvadratisk kryss-tabell (5x5) mellom faktiske sjangre og k-Means klynger:")
     print(ct)
     
-    # Prosentvis fordeling per sjanger over klyngene
-    ct_norm = pd.crosstab(df_known['Genre_Family'], df_known['Cluster'], normalize='index') * 100
+    # Prosentvis fordeling per sjanger over klyngene (5x5)
+    ct_norm = pd.crosstab(
+        df_known['Genre_Family'], df_known['Cluster_Genre'], normalize='index'
+    ).reindex(index=GENRE_ORDER, columns=GENRE_ORDER) * 100
     
-    # Figur 5: Heatmap av kryss-tabellen
-    plt.figure(figsize=(10, 6))
-    cluster_short_names = [
-        "Klynge 0: Klubb/Latin Pop",
-        "Klynge 1: Rock/Energi",
-        "Klynge 2: Akustisk/Ballade",
-        "Klynge 3: Urban/Rap"
-    ]
-    sns.heatmap(ct_norm, annot=True, fmt=".1f", cmap="YlGnBu", cbar_kws={'label': 'Andel av sjanger i klynge (%)'},
-                xticklabels=cluster_short_names)
-    plt.title("Hvor havner sjangrene? Andel (%) av hver sjanger fordelt på klynger", fontweight='bold', fontsize=12)
-    plt.xlabel("k-Means Klynge", fontweight='bold')
-    plt.ylabel("Faktisk sjangerfamilie (Ground Truth)", fontweight='bold')
+    # Figur 5: Kvadratisk (5x5) Heatmap av kryss-tabellen
+    plt.figure(figsize=(9, 8))
+    cluster_axis_labels = [f"K{i}: {g}" for i, g in enumerate(GENRE_ORDER)]
+    sns.heatmap(
+        ct_norm,
+        annot=True,
+        fmt=".1f",
+        cmap="YlGnBu",
+        square=True,
+        cbar_kws={'label': 'Andel av sjanger i klynge (%)', 'shrink': 0.82},
+        xticklabels=cluster_axis_labels,
+        yticklabels=GENRE_ORDER
+    )
+    plt.title("Kvadratisk (5×5) samsvarsmatrise: Faktiske sjangre vs. k-Means klynger (%)", fontweight='bold', fontsize=12)
+    plt.xlabel("Tilordnet k-Means Klynge (Akustisk profil)", fontweight='bold')
+    plt.ylabel("Faktisk sjangerfamilie i CSV (Ground Truth)", fontweight='bold')
+    plt.xticks(rotation=30, ha='right')
+    plt.yticks(rotation=0)
     plt.tight_layout()
     fig_path5 = os.path.join(FIGURES_DIR, "5_cluster_genre_heatmap.png")
     plt.savefig(fig_path5, dpi=300)
@@ -320,12 +361,13 @@ def validate_against_genres(df):
     ari = adjusted_rand_score(labels_true, labels_pred)
     nmi = normalized_mutual_info_score(labels_true, labels_pred)
     
-    # Beregn klynge-purity
-    # Purity = sum(max_g(count_k,g)) / N
+    # Beregn klynge-purity og diagonal treffsikkerhet
     cm = pd.crosstab(df_known['Cluster'], df_known['Genre_Family'])
     purity = cm.max(axis=1).sum() / len(df_known)
+    diag_acc = np.trace(ct.values) / len(df_known)
     
     print("\nValideringsmetrikker mot Ground Truth:")
+    print(f"  Diagonal 1-til-1 treff (5x5):   {diag_acc:.1%}")
     print(f"  Cluster Purity:                 {purity:.1%}")
     print(f"  Adjusted Rand Index (ARI):      {ari:.3f}")
     print(f"  Normalized Mutual Info (NMI):   {nmi:.3f}")
@@ -338,8 +380,9 @@ def validate_against_genres(df):
         sns.boxplot(x='Cluster', y=col, hue='Cluster', data=df, ax=axes[idx], palette='tab10', legend=False)
         axes[idx].set_title(f"Fordeling av {col}", fontweight='bold')
         axes[idx].set_xlabel("Klynge")
-        axes[idx].set_xticklabels([f"K{i}" for i in range(4)])
-    plt.suptitle("Akustiske forskjeller på tvers av de 4 klyngene", fontsize=14, fontweight='bold')
+        axes[idx].set_xticks(range(len(GENRE_ORDER)))
+        axes[idx].set_xticklabels([f"K{i}\n({g.split('/')[0].strip()})" for i, g in enumerate(GENRE_ORDER)], fontsize=9)
+    plt.suptitle("Akustiske forskjeller på tvers av de 5 klyngene", fontsize=14, fontweight='bold')
     plt.tight_layout()
     fig_path6 = os.path.join(FIGURES_DIR, "6_feature_distributions_per_cluster.png")
     plt.savefig(fig_path6, dpi=300)
