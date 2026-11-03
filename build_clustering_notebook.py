@@ -51,8 +51,10 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score
 
 # SciPy for dendrogram og optimal klynge-tilordning
-from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster, set_link_color_palette
 from scipy.optimize import linear_sum_assignment
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 # Visualiseringsoppsett
 sns.set_theme(style="whitegrid")
@@ -65,6 +67,15 @@ GENRE_ORDER = [
     'Hip-Hop / Rap',
     'Pop / Dance'
 ]
+
+PALETTE_GENRES = {
+    'Latin / Reggaeton': '#e74c3c',
+    'Rock / Metal': '#2c3e50',
+    'Acoustic / R&B / Indie': '#27ae60',
+    'Hip-Hop / Rap': '#9b59b6',
+    'Pop / Dance': '#3498db'
+}
+CLUSTER_COLORS = [PALETTE_GENRES[g] for g in GENRE_ORDER]
 """))
 
 # CELLE 3: Data loading and mapping
@@ -208,13 +219,13 @@ cluster_names = {
 df['Cluster_Name'] = df['Cluster'].map(cluster_names)
 """))
 
-cells.append(nbf.v4.new_code_cell("""# Profilplot: Standardiserte Z-verdier per klynge
+cells.append(nbf.v4.new_code_cell("""# Profilplot: Standardiserte Z-verdier per klynge (samme fargepalett på tvers av alle figurer)
 scaled_centers = pd.DataFrame(ordered_centers, columns=feature_cols)
 
 plt.figure(figsize=(12, 6))
 for i in range(k):
     plt.plot(feature_cols, scaled_centers.iloc[i], marker='o', lw=2.5,
-             label=f"{cluster_names[i]}")
+             color=CLUSTER_COLORS[i], label=f"{cluster_names[i]}")
 
 plt.axhline(0, color='black', linestyle='--', alpha=0.5, label='Datasettets gjennomsnitt (Z=0)')
 plt.title("Akustiske fingeravtrykk for de 5 klyngene (Z-verdier)", fontweight='bold', fontsize=13)
@@ -291,9 +302,15 @@ cells.append(nbf.v4.new_code_cell("""# Trekk ut et representativt tilfeldig utva
 np.random.seed(42)
 sample_idx = np.random.choice(len(df), size=100, replace=False)
 X_sub = X_scaled[sample_idx]
+sub_clusters = df['Cluster'].iloc[sample_idx].values
 
-# Beregn koblingsmatrise
+# Beregn koblingsmatrise og koble grenene til de 5 gruppefargene
 Z = linkage(X_sub, method='ward')
+h_labels = fcluster(Z, t=10.5, criterion='distance')
+ct_h = pd.crosstab(h_labels, sub_clusters)
+row_ind, col_ind = linear_sum_assignment(-ct_h.values)
+branch_palette = [CLUSTER_COLORS[col_ind[r]] for r in range(len(row_ind))]
+set_link_color_palette(branch_palette)
 
 plt.figure(figsize=(14, 7))
 dendrogram(
@@ -303,13 +320,19 @@ dendrogram(
     leaf_rotation=90,
     leaf_font_size=10,
     show_contracted=True,
-    color_threshold=10.5
+    color_threshold=10.5,
+    above_threshold_color='#95a5a6'
 )
-plt.axhline(10.5, color='red', linestyle='--', label='Kuttnivå for 5 hovedklynger')
-plt.title("Hierarkisk dendrogram (Ward's kobling) for 100 låter", fontweight='bold', fontsize=13)
+set_link_color_palette(None)
+cutoff_line = plt.axhline(10.5, color='#c0392b', linestyle='--', lw=1.8, label='Kuttnivå for 5 hovedklynger (d = 10.5)')
+legend_handles = [cutoff_line] + [
+    Line2D([0], [0], color=CLUSTER_COLORS[i], lw=3, label=f"Gren → K{i}: {g}")
+    for i, g in enumerate(GENRE_ORDER)
+]
+plt.title("Hierarkisk dendrogram (Ward's kobling) fargekodet etter de 5 hovedgruppene", fontweight='bold', fontsize=13)
 plt.xlabel("Klynge / Observasjoner", fontweight='bold')
 plt.ylabel("Ward's Euklidske Avstand", fontweight='bold')
-plt.legend(loc='upper right')
+plt.legend(handles=legend_handles, loc='upper right', frameon=True)
 plt.tight_layout()
 plt.show()
 """))
@@ -336,18 +359,21 @@ ct_pct = pd.crosstab(
     df_known['Genre_Family'], df_known['Cluster_Genre'], normalize='index'
 ).reindex(index=GENRE_ORDER, columns=GENRE_ORDER) * 100
 
-plt.figure(figsize=(9, 8))
+fig, ax = plt.subplots(figsize=(9.5, 8.5))
 cluster_axis_labels = [f"K{i}: {g}" for i, g in enumerate(GENRE_ORDER)]
 sns.heatmap(
     ct_pct, annot=True, fmt=".1f", cmap="YlGnBu", square=True,
     cbar_kws={'label': 'Andel (%) av sjanger i klynge', 'shrink': 0.82},
-    xticklabels=cluster_axis_labels, yticklabels=GENRE_ORDER
+    xticklabels=cluster_axis_labels, yticklabels=GENRE_ORDER, ax=ax
 )
-plt.title("Kvadratisk (5×5) samsvarsmatrise: Faktiske sjangre vs. k-Means klynger (%)", fontweight='bold', fontsize=12)
-plt.xlabel("Tilordnet k-Means Klynge (Akustisk profil)", fontweight='bold')
-plt.ylabel("Faktisk sjangerfamilie i CSV", fontweight='bold')
-plt.xticks(rotation=30, ha='right')
-plt.yticks(rotation=0)
+ax.set_title("Kvadratisk (5×5) samsvarsmatrise: Faktiske sjangre vs. k-Means klynger (%)", fontweight='bold', fontsize=12)
+ax.set_xlabel("Tilordnet k-Means Klynge (Akustisk profil)", fontweight='bold')
+ax.set_ylabel("Faktisk sjangerfamilie i CSV", fontweight='bold')
+plt.xticks(rotation=30, ha='right', fontweight='bold')
+plt.yticks(rotation=0, fontweight='bold')
+for i, color in enumerate(CLUSTER_COLORS):
+    ax.get_xticklabels()[i].set_color(color)
+    ax.get_yticklabels()[i].set_color(color)
 plt.tight_layout()
 plt.show()
 
