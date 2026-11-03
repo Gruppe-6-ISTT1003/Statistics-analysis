@@ -268,6 +268,87 @@ def perform_pca_and_visualization(df, X_scaled, feature_cols):
     plt.close()
     print(f"Lagret: {fig_path3}")
 
+    # Felles akserekkevidde for alle individuelle PCA-plott
+    x_min, x_max = df['PC1'].min() - 0.5, df['PC1'].max() + 0.5
+    y_min, y_max = df['PC2'].min() - 0.5, df['PC2'].max() + 0.5
+
+    # Figur 3b: 2x5 oversiktsgrid med hver farge/kategori på sitt eget plott
+    fig, axes = plt.subplots(2, 5, figsize=(22, 9), sharex=True, sharey=True)
+    for idx, genre in enumerate(GENRE_ORDER):
+        color = palette_genres[genre]
+
+        ax_top = axes[0, idx]
+        df_other_c = df[df['Cluster_Genre'] != genre]
+        df_this_c = df[df['Cluster_Genre'] == genre]
+        ax_top.scatter(df_other_c['PC1'], df_other_c['PC2'], c='#dcdde1', s=15, alpha=0.35, label='Andre låter')
+        ax_top.scatter(df_this_c['PC1'], df_this_c['PC2'], c=color, s=28, alpha=0.8, edgecolors='white', linewidth=0.3,
+                       label=f"K{idx} (n={len(df_this_c)})")
+        ax_top.set_title(f"K{idx}: {genre}\n(k-Means, n={len(df_this_c)})", fontweight='bold', fontsize=11)
+        ax_top.set_xlim(x_min, x_max)
+        ax_top.set_ylim(y_min, y_max)
+        if idx == 0:
+            ax_top.set_ylabel(f"k-Means Klynge\nPC2 ({var_exp[1]:.1%})", fontweight='bold')
+
+        ax_bot = axes[1, idx]
+        df_other_g = df_known[df_known['Genre_Family'] != genre]
+        df_this_g = df_known[df_known['Genre_Family'] == genre]
+        ax_bot.scatter(df_other_g['PC1'], df_other_g['PC2'], c='#dcdde1', s=15, alpha=0.35, label='Andre kjente sjangre')
+        ax_bot.scatter(df_this_g['PC1'], df_this_g['PC2'], c=color, s=28, alpha=0.8, edgecolors='white', linewidth=0.3,
+                       label=f"{genre} (n={len(df_this_g)})")
+        ax_bot.set_title(f"{genre}\n(Faktisk sjanger, n={len(df_this_g)})", fontweight='bold', fontsize=11)
+        ax_bot.set_xlabel(f"PC1 ({var_exp[0]:.1%})", fontweight='bold')
+        if idx == 0:
+            ax_bot.set_ylabel(f"Faktisk sjanger (CSV)\nPC2 ({var_exp[1]:.1%})", fontweight='bold')
+
+    plt.suptitle("Individuell PCA-projeksjon per farge/kategori: k-Means Klynger (øverst) vs. Faktiske Sjangre (nederst)",
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    fig_path3b = os.path.join(FIGURES_DIR, "3b_pca_individual_grid.png")
+    plt.savefig(fig_path3b, dpi=300)
+    plt.close()
+    print(f"Lagret: {fig_path3b}")
+
+    # Figur 3_1 til 3_5: Separate side-ved-side filer for hver enkelt farge/sjanger
+    slug_map = {
+        'Latin / Reggaeton': 'latin_reggaeton',
+        'Rock / Metal': 'rock_metal',
+        'Acoustic / R&B / Indie': 'acoustic_rnb_indie',
+        'Hip-Hop / Rap': 'hiphop_rap',
+        'Pop / Dance': 'pop_dance'
+    }
+    for idx, genre in enumerate(GENRE_ORDER, start=1):
+        color = palette_genres[genre]
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5), sharex=True, sharey=True)
+
+        df_other_c = df[df['Cluster_Genre'] != genre]
+        df_this_c = df[df['Cluster_Genre'] == genre]
+        ax1.scatter(df_other_c['PC1'], df_other_c['PC2'], c='#dcdde1', s=22, alpha=0.35, label='Øvrige klynger')
+        ax1.scatter(df_this_c['PC1'], df_this_c['PC2'], c=color, s=40, alpha=0.8, edgecolors='white', linewidth=0.4,
+                    label=f"K{idx-1}: {genre} (n={len(df_this_c)})")
+        ax1.set_title(f"A) k-Means Klynge K{idx-1}: {genre}", fontweight='bold')
+        ax1.set_xlabel(f"PC1 ({var_exp[0]:.1%} varians) - Energi/Lydstyrke vs Akustisk", fontweight='bold')
+        ax1.set_ylabel(f"PC2 ({var_exp[1]:.1%} varians) - Dansbarhet & Munterhet", fontweight='bold')
+        ax1.set_xlim(x_min, x_max)
+        ax1.set_ylim(y_min, y_max)
+        ax1.legend(loc="upper left", frameon=True)
+
+        df_other_g = df_known[df_known['Genre_Family'] != genre]
+        df_this_g = df_known[df_known['Genre_Family'] == genre]
+        ax2.scatter(df_other_g['PC1'], df_other_g['PC2'], c='#dcdde1', s=22, alpha=0.35, label='Øvrige sjangre')
+        ax2.scatter(df_this_g['PC1'], df_this_g['PC2'], c=color, s=40, alpha=0.8, edgecolors='white', linewidth=0.4,
+                    label=f"Faktisk: {genre} (n={len(df_this_g)})")
+        ax2.set_title(f"B) Faktisk sjanger (Ground Truth): {genre}", fontweight='bold')
+        ax2.set_xlabel(f"PC1 ({var_exp[0]:.1%} varians)", fontweight='bold')
+        ax2.set_ylabel(f"PC2 ({var_exp[1]:.1%} varians)", fontweight='bold')
+        ax2.legend(loc="upper left", frameon=True)
+
+        plt.suptitle(f"PCA-sammenligning for {genre}: Predikert klynge vs. Faktisk sjanger", fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        fig_path_ind = os.path.join(FIGURES_DIR, f"3_{idx}_pca_{slug_map[genre]}.png")
+        plt.savefig(fig_path_ind, dpi=300)
+        plt.close()
+        print(f"Lagret: {fig_path_ind}")
+
 
 def hierarchical_clustering(df, X_scaled):
     """
@@ -372,17 +453,38 @@ def validate_against_genres(df):
     print(f"  Adjusted Rand Index (ARI):      {ari:.3f}")
     print(f"  Normalized Mutual Info (NMI):   {nmi:.3f}")
     
-    # Figur 6: Fordeling av nøkkelegenskaper per klynge
-    key_features = ['Danceability', 'Speechiness', 'Acousticness', 'Energy']
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    # Figur 6: Fordeling av alle 7 akustiske egenskaper per klynge
+    all_features = [
+        'Danceability', 'Energy', 'Loudness', 'Speechiness',
+        'Acousticness', 'Valence', 'Tempo'
+    ]
+    cluster_palette = ['#e74c3c', '#2c3e50', '#27ae60', '#9b59b6', '#3498db']
+    fig, axes = plt.subplots(2, 4, figsize=(18, 9))
     axes = axes.flatten()
-    for idx, col in enumerate(key_features):
-        sns.boxplot(x='Cluster', y=col, hue='Cluster', data=df, ax=axes[idx], palette='tab10', legend=False)
+    for idx, col in enumerate(all_features):
+        sns.boxplot(x='Cluster', y=col, hue='Cluster', data=df, ax=axes[idx], palette=cluster_palette, legend=False)
         axes[idx].set_title(f"Fordeling av {col}", fontweight='bold')
         axes[idx].set_xlabel("Klynge")
         axes[idx].set_xticks(range(len(GENRE_ORDER)))
         axes[idx].set_xticklabels([f"K{i}\n({g.split('/')[0].strip()})" for i, g in enumerate(GENRE_ORDER)], fontsize=9)
-    plt.suptitle("Akustiske forskjeller på tvers av de 5 klyngene", fontsize=14, fontweight='bold')
+
+    # Bruk det 8. panelet til en oversiktlig fargeforklaring for de 5 klyngene
+    axes[7].axis('off')
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor=cluster_palette[i], edgecolor='black', label=f"K{i}: {g}")
+        for i, g in enumerate(GENRE_ORDER)
+    ]
+    axes[7].legend(
+        handles=legend_handles,
+        title="k-Means Klynger (k=5)",
+        title_fontsize=12,
+        fontsize=11,
+        loc='center',
+        frameon=True
+    )
+
+    plt.suptitle("Akustiske forskjeller på tvers av de 5 klyngene (Alle 7 egenskaper)", fontsize=14, fontweight='bold')
     plt.tight_layout()
     fig_path6 = os.path.join(FIGURES_DIR, "6_feature_distributions_per_cluster.png")
     plt.savefig(fig_path6, dpi=300)
