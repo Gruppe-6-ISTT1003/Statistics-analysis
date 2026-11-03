@@ -515,6 +515,14 @@ def main():
     # Validering mot reelle sjangre
     validate_against_genres(df)
     
+    # Lagre ny CSV-fil med generaliserte sjangerkategorier og klyngetilhørighet plassert rett etter 'Genres'
+    orig_cols = [c for c in df.columns if c not in ['Genre_Family', 'Raw_Cluster', 'Cluster', 'Cluster_Genre', 'Cluster_Name', 'PC1', 'PC2']]
+    genres_idx = orig_cols.index('Genres') + 1
+    out_cols = orig_cols[:genres_idx] + ['Genre_Family', 'Cluster', 'Cluster_Genre'] + orig_cols[genres_idx:]
+    out_csv_path = "data/kworb_top2500_spotify_generalized.csv"
+    df[out_cols].to_csv(out_csv_path, index=False)
+    print(f"\nLagret CSV med generaliserte kategorier: {out_csv_path}")
+    
     print("\n" + "=" * 65)
     print("KLYNGEANALYSE FULLFØRT!")
     print(f"Alle figurer er lagret i: '{FIGURES_DIR}/'")
